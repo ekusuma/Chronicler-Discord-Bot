@@ -58,15 +58,53 @@ def log(msg):
 
 #TODO: what do do if a member leaves?
 class Quote:
-    def __init__(self, author_id=0, quoter_id=0, msg_id=0):
-        self.author_id = author_id
-        self.quoter_id = quoter_id
+    def __init__(self, author=None, quoter=None, msg_id=0):
+        self.author = author
+        self.quoter = quoter
         self.msg_id = msg_id
 
-    def save_to_db(self):
+    async def save_to_db(self, message):
+        author_id = self.author.id
+        quoter_id = self.quoter.id
+        is_bot = self.author.bot
+
+        # Debug logging
+        log('Member {} is trying to save a quote:'.format(self.quoter.nick))
+        if is_bot:
+            log('  Request denied: tried to save a bot quote')
+        else:
+            log('  Author       :{}'.format(self.author.nick))
+            log('  Channel      :[]'.format(message.channel.name))
+            log('  Message      :{}'.format(message.content))
+
+        # Don't accept if the quote author is a bot
+        if (is_bot):
+            await message.clear_reaction('💬')
+            await message.channel.send(
+                'Sorry {}, I don\'t save quotes from non-humans!'.format(member_saver.nick))
+            return
+
         cols = 'author_id, quoter_id, message_id'
-        vals = '{}, {}, {}'.format(self.author_id, self.quoter_id, self.msg_id)
+        vals = '{}, {}, {}'.format(author_id, quoter_id, self.msg_id)
         db.insert_partial(conn, table_name, cols, vals)
+
+        # Acknowledge save with check mark emoji
+        await message.clear_reaction('💬')
+        await message.add_reaction('✅')
+
+    async def remove_from_db(self, message):
+        log('Member {} is trying to delete a quote:'.format(self.quoter.nick))
+        log('  Author       :{}'.format(self.author.nick))
+        log('  Channel      :[]'.format(message.channel.name))
+        log('  Message      :{}'.format(message.content))
+
+        retval = db.delete(conn, table_name, 'message_id={}'.format(self.msg_id))
+        if retval != 0:
+            log('  Error: Unable to delete message')
+        else:
+            # Acknowledge deletee with removing check mark emoji
+            await message.clear_reaction('❌')
+            await message.clear_reaction('✅')
 
     #def fill_from_entry(self, entry):
 
@@ -89,7 +127,8 @@ async def on_message(message):
 @client.event
 async def on_raw_reaction_add(payload):
     # Exit early if not reacting with what we want
-    if str(payload.emoji) != '💬':
+    emoji = str(payload.emoji)
+    if emoji != '💬' and emoji != '❌':
         return
 
     # Need these for future ops
@@ -104,28 +143,13 @@ async def on_raw_reaction_add(payload):
     # Should know if the message is from a bot or not
     is_bot = message.author.bot
 
-    # Log the operation to console
-    log('Member {} is trying to save a quote:'.format(member_saver.nick))
-    if (is_bot):
-        log('  Request denied: tried to save a bot quote')
-    else:
-        log('  Author     :{}'.format(member_author.nick))
-        log('  Channel    :{}'.format(channel.name))
-        log('  Message    :{}'.format(message.content))
+    # Construct new quote object
+    quote = Quote(member_author, member_saver, payload.message_id)
 
-    # Don't accept if the quote author is a bot
-    if (is_bot):
-        await message.clear_reaction('💬')
-        await channel.send('Sorry {}, I don\'t save quotes from non-humans!'.format(member_saver.nick))
-        return
-
-    # Save the information to DB
-    quote = Quote(member_author.id, member_saver.id, payload.message_id)
-    quote.save_to_db()
-
-    # Acknowledge save with check mark emoji
-    await message.clear_reaction('💬')
-    await message.add_reaction('✅')
+    if (emoji == '💬'):
+        await quote.save_to_db(message)
+    elif (emoji == '❌'):
+        await quote.remove_from_db(message)
 
 
 ################################################################################
