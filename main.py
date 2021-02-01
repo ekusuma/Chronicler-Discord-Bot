@@ -1,9 +1,25 @@
 #!/usr/bin/python3
 
-import discord
+"""
+the Chronicler -- Discord bot
+=============================
+
+A fun Discord bot meant for saving and repeating quotes--usually without
+context.
+
+The quoting function is first and foremost, with any additions of functionality
+later on being a bonus.
+"""
+
+__title__ = 'the Chronicler bot'
+__author__ = 'edgykuma'
+__license__ = 'MIT'
+
 import datetime
 import pytz
 import random
+
+import discord
 
 import dbhelper as db
 
@@ -50,11 +66,15 @@ BOT_STATUSES = [
     'Eekum Bokum'
 ]
 
+# Setting for allowing/disallowing cross-channel quotes...to be decided later
+ALLOW_XCHAN = True
+
 
 ################################################################################
 # Initialization
 ################################################################################
 
+# Attempt to open and read the bot's .token file
 try:
     token_file = open('.token', 'r')
     TOKEN = token_file.read().strip()
@@ -73,9 +93,9 @@ CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
 if CONN == None:
     print('ERROR: Unable to connect to DB.')
     exit(1)
-QUOTES_TABLE = 'quotes'
 
 # Try to create the 'quotes' table--ignore the error if it exists
+# TODO: a more elegant way to check if table exists in SQL?
 table_cols = """
     author_id BIGINT NOT NULL,
     quoter_id BIGINT,
@@ -91,19 +111,51 @@ db.create_table(CONN, QUOTES_TABLE, table_cols)
 ################################################################################
 
 def log(msg):
+    """Helpful log printing, with timestamp (in PST)
+
+    Parameters
+    ==========
+    msg : str
+        Message to print with timestamp.
+    """
     ct = datetime.datetime.now()
     ct_pst = ct.astimezone(pytz.timezone('US/Pacific'))
     cts = ct_pst.strftime("%Y/%m/%d %H:%M:%S")
     print("[{}] {}".format(cts, msg))
 
 def startswith_word(phrase, startswith):
+    """Check if a string starts with a word
+
+    Basic startswith method doesn't separate into words, so checking if a string
+    starts with '$foo' will return true for both '$foo' and '$fooooooo'.
+
+    Parameters
+    ==========
+    phrase : str
+        Phrase to check startswith against.
+    startswith : str
+        Word to check whether or not phrase starts with it.
+
+    Returns
+    =======
+    bool
+        True if the first word of phrase is startswith, False otherwise.
+    """
     return len(phrase.split()) > 0 and phrase.split()[0] == startswith
 
 async def set_rand_status():
-    status = discord.CustomActivity(random.choice(BOT_STATUSES))
-    await CLIENT.change_presence(activity=status)
+    """Set the bot's status to one of the strings in BOT_STATUSES"""
+    activity = discord.Activity(type=discord.ActivityType.watching,
+            name=random.choice(BOT_STATUSES))
+    await CLIENT.change_presence(activity=activity)
 
 async def roll_rand_status():
+    """Roll for a chance to set the bot's status to a random one
+
+    Will be used to periodically change statuses.
+
+    TODO: Might adversely affect performance, investigate at some point.
+    """
     num = random.randint(1, 100)
     # 5% chance to get a random status
     if (num <= 5):
@@ -115,12 +167,55 @@ async def roll_rand_status():
 ################################################################################
 
 class Quote:
+    """Class that tracks everything we need for a quote.
+
+    Attributes
+    ==========
+    author : discord.Member
+        The Member that wrote the quote.
+    quoter : discord.Member
+        The Member that saved the quote.
+    message : discord.Message
+        The Message to quote.
+
+    Note: Could have performance issues since we pass around the entire Member
+    and Message objects, rather than the ID. However since this avoids future
+    API calls to match ID->object, this is probably fine.
+
+    Methods
+    =======
+    save_to_db()
+        Save a quote to the database.
+    remove_from_db()
+        Remove a quote from the database.
+    fill_from_entry(entry)
+        Takes an entry that was taken from the database, and makes the necessary
+        API calls to populate a Quote's attributes.
+    """
     def __init__(self, author=None, quoter=None, message=None):
+        """
+        Parameters
+        ==========
+        author : discord.Member
+            The Member that wrote the quote.
+        quoter : discord.Member
+            The Member that saved the quote.
+        message : discord.Message
+            The Message to quote.
+
+        Note: We allow None for the attributes so a blank Quote can be made
+        with the intent to fill it out later.
+        """
         self.author = author
         self.quoter = quoter
         self.message= message
 
     async def save_to_db(self):
+        """Save a quote to the database"""
+        if (self.author == None or self.quoter == None or self.message == None):
+            log('ERROR: Tried to call save_to_db() on a blank Quote')
+            return
+
         author_id = self.author.id
         quoter_id = self.quoter.id
         message_id = self.message.id
@@ -134,7 +229,7 @@ class Quote:
             log('  Request denied: tried to save a bot quote')
         else:
             log('  Author       :{}'.format(self.author.name))
-            log('  Channel      :{}'.format(self.message.channel.name))
+            log('  Channel      :#{}'.format(self.message.channel.name))
             log('  Message      :{}'.format(self.message.content))
 
         # Don't accept if the quote author is a bot
@@ -154,9 +249,14 @@ class Quote:
         await self.message.add_reaction(EMOJI_BOT_CONFIRM)
 
     async def remove_from_db(self):
+        """Remove a quote from the database"""
+        if (self.author == None or self.quoter == None or self.message == None):
+            log('ERROR: Tried to call remove_from_db() on a blank Quote')
+            return
+
         log('Member {} is trying to delete a quote:'.format(self.quoter.name))
         log('  Author       :{}'.format(self.author.name))
-        log('  Channel      :{}'.format(self.message.channel.name))
+        log('  Channel      :#{}'.format(self.message.channel.name))
         log('  Message      :{}'.format(self.message.content))
 
         retval = db.delete(CONN, QUOTES_TABLE, 'message_id={}'.format(self.message.id))
@@ -168,11 +268,20 @@ class Quote:
             await self.message.clear_reaction(EMOJI_BOT_CONFIRM)
 
     async def fill_from_entry(self, entry):
+        """Populate Quote attributes from a database entry
+
+        Parameters
+        ==========
+        entry : (int, int, int, int, int)
+            A tuple describing a quote's
+            (author_id, quoter_id, msg_id, guild_id, channel_id)
+            This is an entry that would be taken directly from the database.
+        """
         # Assumes that entry is tuple of:
         #   (author_id, quoter_id, message_id, guild_id, channel_id)
         if len(entry) < 5:
             log('ERROR: Tried to populate quote object with invalid entry')
-            return 1
+            return
         author_id = int(entry[0])
         quoter_id = int(entry[1])
         msg_id = int(entry[2])
@@ -191,20 +300,35 @@ class Quote:
 ################################################################################
 
 async def repeat_quote(channel, quote):
+    """Send a selected quote to a specific channel.
+
+    Quotes are formatted with Discord's embed.
+
+    Parameters
+    ==========
+    channel : discord.Channel
+        The channel that the bot should send the quote to.
+    quote : Quote
+        The quote that the bot should send.
+    """
     # Get URL to quoted message
     server_id = channel.guild.id
     channel_id = channel.id
     msg_id = quote.message.id
+    # URL is useful if a user wants to jump to the quoted message
     url = 'https://discordapp.com/channels/{}/{}/{}'.format(
         server_id, channel_id, msg_id)
 
     embed = discord.Embed(
         title='Quotes from the Chronicler!',
         color=discord.Color.red(),
+        # Markdown-esque formatting, for a quote
         description='> ' + quote.message.content,
         url=url
     )
+    # Author of the embed is the bot
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
+    # But thumbnail should be avatar of the quote's author
     embed.set_thumbnail(url=quote.author.avatar_url)
 
     # Construct footer
@@ -218,6 +342,13 @@ async def repeat_quote(channel, quote):
     await channel.send(embed=embed)
 
 async def rquote_help(channel):
+    """Send a help message for usage of the $rquote command
+
+    Parameters
+    ==========
+    channel : discord.Channel
+        Channel to send the help message to.
+    """
     embed = discord.Embed(
         title='How to Quote!',
         color=discord.Color.red()
@@ -237,12 +368,21 @@ async def rquote_help(channel):
     await channel.send(embed=embed)
 
 async def rquote(message):
+    """Handle a user's request to use the $rquote command
+
+    Parameters
+    ==========
+    message : discord.Message
+        User message that triggered the command.
+    """
     log('$rquote request from {}'.format(message.author.name))
 
+    # Asking for help will override any tokens
     if 'help' in message.content.split():
         await rquote_help(message.channel)
         return
 
+    # Look to see who was tagged, if any
     tagged_member = None
     mentions = message.mentions
     if len(mentions) > 1:
@@ -254,26 +394,31 @@ async def rquote(message):
     elif len(mentions) == 1:
         tagged_member = mentions[0]
 
-    #TODO filter by channel ID?
-    #where = 'channel_id = {}'.format(message.channel.id)
-    if tagged_member != None:
-        where = 'author_id = {}'.format(tagged_member.id)
-        #where = ' AND author_id = {}'.format(tagged_member.id)
+    # Filter by channel ID, if cross-channel setting is disabled
+    if ALLOW_XCHAN:
+        if tagged_member != None:
+            where = 'author_id = {}'.format(tagged_member.id)
+        else:
+            where = None
     else:
-        where = None
+        where = 'channel_id = {}'.format(message.channel.id)
+        if tagged_member != None:
+            where += ' AND author_id = {}'.format(tagged_member.id)
 
+    # Grab all results that match our criteria
     results = db.select(CONN, QUOTES_TABLE, '*', where)
     if len(results) == 0:
         log('  No quotes found.')
         await message.channel.send(
             'No quotes found! Use `$rquote help` for usage information.')
         return
+    # Pick a random quote from the bunch
     result = random.choice(results)
 
     quote = Quote()
     await quote.fill_from_entry(result)
     log('  Author       :{}'.format(quote.author.name))
-    log('  Channel      :{}'.format(quote.message.channel.name))
+    log('  Channel      :#{}'.format(quote.message.channel.name))
     log('  Message      :{}'.format(quote.message.content))
 
     await repeat_quote(message.channel, quote)
@@ -285,21 +430,44 @@ async def rquote(message):
 
 @CLIENT.event
 async def on_ready():
+    """Bot routines to run once it's up and ready"""
     log('BEEP BEEP. Logged in as <{0.user}>'.format(CLIENT))
     await set_rand_status()
 
 @CLIENT.event
 async def on_message(message):
+    """Bot routines to run whenever a new messge is sent
+
+    Basically just check for target keywords.
+
+    Parameters
+    ==========
+    message : discord.Message
+        The message that was just sent.
+    """
+    # Ignore the message if it's from this bot
     if message.author == CLIENT.user:
         return
-    if message.content.startswith('$hello'):
+    if startswith_word(message.content, '$hello'):
         await message.channel.send('Orayo~!')
     if startswith_word(message.content, '$rquote'):
         await rquote(message)
+
+    # Chance to change the bot status on new message
     await roll_rand_status()
 
 @CLIENT.event
 async def on_raw_reaction_add(payload):
+    """Bot routine to run whenever a reaction is added to any message
+
+    We use the raw event handler since we can't rely on the bot's cache (as this
+    has to work for ANY message, not just the cached ones).
+
+    Parameters
+    ==========
+    payload : discord.RawReactionActionEvent
+        The payload of the reaction event.
+    """
     # Need to cast to string, since Discord emoji not really an emoji
     emoji = str(payload.emoji)
     # Exit early if not reacting with what we want
@@ -315,8 +483,6 @@ async def on_raw_reaction_add(payload):
     member_saver = payload.member
     user_author = message.author
     member_author = await guild.fetch_member(user_author.id)
-    # Should know if the message is from a bot or not
-    is_bot = message.author.bot
 
     # Construct new quote object
     quote = Quote(member_author, member_saver, message)
@@ -332,4 +498,5 @@ async def on_raw_reaction_add(payload):
 # Run the bot
 ################################################################################
 
+# Wow, so elegant!
 CLIENT.run(TOKEN)
