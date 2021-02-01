@@ -9,6 +9,49 @@ import dbhelper as db
 
 
 ################################################################################
+# Useful globals
+################################################################################
+
+# Bot's private token, to be read from the .token file (DO NOT PUT IN REPO)
+TOKEN = ''
+
+# Global instance of the bot's Discord client
+CLIENT = None
+
+# Connection to the bot's MySQL DB
+CONN = None
+
+# Name of the quotes table
+QUOTES_TABLE = 'quotes'
+
+# Emojis to watch reactions for (aliased to variable names since typing emoji
+# can be annoying)
+EMOJI_QUOTE     = '💬'      # For quoting a message
+EMOJI_DELQUOTE  = '❌'      # For deleting a message
+# Use this set to determine if an emoji is in it
+KEY_REACTS = {
+    EMOJI_QUOTE,
+    EMOJI_DELQUOTE
+}
+# These emoji are reactions for the bot to report a status
+EMOJI_BOT_CONFIRM   = '✅'
+
+# Fun statuses for the bot
+BOT_STATUSES = [
+    'I\'m DOG!',
+    'WOWOWOWOWOW',
+    'Orayo~!',
+    'Hotate!',
+    'tetaHo!',
+    'Yubi yubi 🎵',
+    'I\'m die, thank you forever',
+    'Water in the fire...WHY?!',
+    'Have confidence! ...no confidence!',
+    'Eekum Bokum'
+]
+
+
+################################################################################
 # Initialization
 ################################################################################
 
@@ -23,15 +66,14 @@ except FileNotFoundError:
     print('ERROR: Unable to read a .token file. Please make sure it exists.')
     exit(1)
 
-# Useful globals
 # Create new instance of Discord client
-client = discord.Client()
+CLIENT = discord.Client()
 # Create connection to Chronicler's MySQL DB
-conn = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
-if conn == None:
+CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
+if CONN == None:
     print('ERROR: Unable to connect to DB.')
     exit(1)
-table_name = 'quotes'
+QUOTES_TABLE = 'quotes'
 
 # Try to create the 'quotes' table--ignore the error if it exists
 table_cols = """
@@ -41,7 +83,7 @@ table_cols = """
     guild_id BIGINT NOT NULL,
     channel_id BIGINT NOT NULL
 """
-db.create_table(conn, table_name, table_cols)
+db.create_table(CONN, QUOTES_TABLE, table_cols)
 
 
 ################################################################################
@@ -54,12 +96,24 @@ def log(msg):
     cts = ct_pst.strftime("%Y/%m/%d %H:%M:%S")
     print("[{}] {}".format(cts, msg))
 
+def startswith_word(phrase, startswith):
+    return len(phrase.split()) > 0 and phrase.split()[0] == startswith
+
+async def set_rand_status():
+    status = discord.CustomActivity(random.choice(BOT_STATUSES))
+    await CLIENT.change_presence(activity=status)
+
+async def roll_rand_status():
+    num = random.randint(1, 100)
+    # 5% chance to get a random status
+    if (num <= 5):
+        await set_rand_status()
+
 
 ################################################################################
 # Helper classes
 ################################################################################
 
-#TODO: what do do if a member leaves?
 class Quote:
     def __init__(self, author=None, quoter=None, message=None):
         self.author = author
@@ -80,7 +134,7 @@ class Quote:
             log('  Request denied: tried to save a bot quote')
         else:
             log('  Author       :{}'.format(self.author.name))
-            log('  Channel      :[]'.format(self.message.channel.name))
+            log('  Channel      :{}'.format(self.message.channel.name))
             log('  Message      :{}'.format(self.message.content))
 
         # Don't accept if the quote author is a bot
@@ -93,25 +147,25 @@ class Quote:
         cols = 'author_id, quoter_id, message_id, guild_id, channel_id'
         vals = '{}, {}, {}, {}, {}'.format(
                 author_id, quoter_id, message_id, guild_id, channel_id)
-        db.insert_partial(conn, table_name, cols, vals)
+        db.insert_partial(CONN, QUOTES_TABLE, cols, vals)
 
         # Acknowledge save with check mark emoji
-        await self.message.clear_reaction('💬')
-        await self.message.add_reaction('✅')
+        await self.message.clear_reaction(EMOJI_QUOTE)
+        await self.message.add_reaction(EMOJI_BOT_CONFIRM)
 
     async def remove_from_db(self):
         log('Member {} is trying to delete a quote:'.format(self.quoter.name))
         log('  Author       :{}'.format(self.author.name))
-        log('  Channel      :[]'.format(self.message.channel.name))
+        log('  Channel      :{}'.format(self.message.channel.name))
         log('  Message      :{}'.format(self.message.content))
 
-        retval = db.delete(conn, table_name, 'message_id={}'.format(self.message.id))
+        retval = db.delete(CONN, QUOTES_TABLE, 'message_id={}'.format(self.message.id))
         if retval != 0:
             log('  Error: Unable to delete message')
         else:
             # Acknowledge deletee with removing check mark emoji
-            await self.message.clear_reaction('❌')
-            await self.message.clear_reaction('✅')
+            await self.message.clear_reaction(EMOJI_DELQUOTE)
+            await self.message.clear_reaction(EMOJI_BOT_CONFIRM)
 
     async def fill_from_entry(self, entry):
         # Assumes that entry is tuple of:
@@ -125,15 +179,15 @@ class Quote:
         guild_id = int(entry[3])
         channel_id = int(entry[4])
 
-        guild = await client.fetch_guild(guild_id)
-        channel = await client.fetch_channel(channel_id)
+        guild = await CLIENT.fetch_guild(guild_id)
+        channel = await CLIENT.fetch_channel(channel_id)
         self.author = await guild.fetch_member(author_id)
         self.quoter = await guild.fetch_member(quoter_id)
         self.message = await channel.fetch_message(msg_id)
 
 
 ################################################################################
-# Helper functions
+# Main helper functions
 ################################################################################
 
 async def repeat_quote(channel, quote):
@@ -150,7 +204,7 @@ async def repeat_quote(channel, quote):
         description='> ' + quote.message.content,
         url=url
     )
-    embed.set_author(name=client.user, icon_url=client.user.avatar_url)
+    embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
     embed.set_thumbnail(url=quote.author.avatar_url)
 
     # Construct footer
@@ -168,7 +222,7 @@ async def rquote_help(channel):
         title='How to Quote!',
         color=discord.Color.red()
     )
-    embed.set_author(name=client.user, icon_url=client.user.avatar_url)
+    embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
 
     embed.add_field(name='Adding a quote', inline=True,
         value='React to a message with the `:speech_balloon:` emoji (💬)')
@@ -208,7 +262,7 @@ async def rquote(message):
     else:
         where = None
 
-    results = db.select(conn, table_name, '*', where)
+    results = db.select(CONN, QUOTES_TABLE, '*', where)
     if len(results) == 0:
         log('  No quotes found.')
         await message.channel.send(
@@ -219,7 +273,7 @@ async def rquote(message):
     quote = Quote()
     await quote.fill_from_entry(result)
     log('  Author       :{}'.format(quote.author.name))
-    log('  Channel      :[]'.format(quote.message.channel.name))
+    log('  Channel      :{}'.format(quote.message.channel.name))
     log('  Message      :{}'.format(quote.message.content))
 
     await repeat_quote(message.channel, quote)
@@ -229,29 +283,32 @@ async def rquote(message):
 # Discord event functions
 ################################################################################
 
-@client.event
+@CLIENT.event
 async def on_ready():
-    log('BEEP BEEP. Logged in as <{0.user}>'.format(client))
+    log('BEEP BEEP. Logged in as <{0.user}>'.format(CLIENT))
+    await set_rand_status()
 
-@client.event
+@CLIENT.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == CLIENT.user:
         return
     if message.content.startswith('$hello'):
         await message.channel.send('Orayo~!')
-    if message.content.split()[0] == '$rquote':
+    if startswith_word(message.content, '$rquote'):
         await rquote(message)
+    await roll_rand_status()
 
-@client.event
+@CLIENT.event
 async def on_raw_reaction_add(payload):
-    # Exit early if not reacting with what we want
+    # Need to cast to string, since Discord emoji not really an emoji
     emoji = str(payload.emoji)
-    if emoji != '💬' and emoji != '❌':
+    # Exit early if not reacting with what we want
+    if emoji not in KEY_REACTS:
         return
 
     # Need these for future ops
-    guild = client.get_guild(payload.guild_id)
-    channel = client.get_channel(payload.channel_id)
+    guild = CLIENT.get_guild(payload.guild_id)
+    channel = CLIENT.get_channel(payload.channel_id)
 
     # Get message, quoter, and quote author
     message = await channel.fetch_message(payload.message_id)
@@ -264,9 +321,10 @@ async def on_raw_reaction_add(payload):
     # Construct new quote object
     quote = Quote(member_author, member_saver, message)
 
-    if (emoji == '💬'):
+    # Ugh, why doesn't Python have switch statements...?
+    if (emoji == EMOJI_QUOTE):
         await quote.save_to_db()
-    elif (emoji == '❌'):
+    elif (emoji == EMOJI_DELQUOTE):
         await quote.remove_from_db()
 
 
@@ -274,4 +332,4 @@ async def on_raw_reaction_add(payload):
 # Run the bot
 ################################################################################
 
-client.run(TOKEN)
+CLIENT.run(TOKEN)
