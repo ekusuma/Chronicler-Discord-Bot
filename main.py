@@ -66,6 +66,9 @@ BOT_STATUSES = [
     'Eekum Bokum'
 ]
 
+# Percent chance that the bot rerolls its status
+STATUS_RR_CHANCE = 1
+
 # Setting for allowing/disallowing cross-channel quotes...to be decided later
 ALLOW_XCHAN = True
 
@@ -162,8 +165,7 @@ async def roll_rand_status():
     TODO: Might adversely affect performance, investigate at some point.
     """
     num = random.randint(1, 100)
-    # 5% chance to get a random status
-    if (num <= 5):
+    if (num <= STATUS_RR_CHANCE):
         await set_rand_status()
 
 def reset_sql_conn():
