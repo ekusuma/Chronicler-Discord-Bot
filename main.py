@@ -69,6 +69,11 @@ BOT_STATUSES = [
 # Setting for allowing/disallowing cross-channel quotes...to be decided later
 ALLOW_XCHAN = True
 
+# Maximum size of the "repeat buffer"
+REPEAT_BUF_SIZE = 10
+# (Revolving) list of messages to not repeat
+REPEAT_BUF = []
+
 
 ################################################################################
 # Initialization
@@ -166,6 +171,25 @@ def reset_sql_conn():
     global CONN
     db.close_srv_conn(CONN)
     CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
+
+def add_to_repeat_buf(msg_id):
+    """Add a message ID to the repeat buffer, kicking out oldest ID if full
+
+    The point of the repeat buffer is to prevent the bot from picking the same
+    set of quotes. If a quote (identified by message ID) is in the buffer, then
+    the bot will find another quote (if it exists).
+
+    Parameters
+    ==========
+    msg_id : int
+        The ID of the message to add
+    """
+    # Pop off front of buffer if full
+    if len(REPEAT_BUF) >= REPEAT_BUF_SIZE:
+        removed = REPEAT_BUF.pop(0)
+        log('  Removed {} from repeat buffer'.format(removed))
+    REPEAT_BUF.append(msg_id)
+    log('  Added {} to repeat buffer'.format(msg_id))
 
 
 ################################################################################
@@ -432,6 +456,15 @@ async def rquote(message):
         return
     # Pick a random quote from the bunch
     result = random.choice(results)
+    # Reroll if the result is in the repeat buffer
+    #   Message ID is Index 2 of the results tuple
+    #   If there is only one result remaining, then pick that anyway
+    while (len(results) > 1 and result[2] in REPEAT_BUF):
+        results.remove(result)
+        result = random.choice(results)
+    # If the final chosen one isn't in repeat buffer, then add it
+    if result[2] not in REPEAT_BUF:
+        add_to_repeat_buf(result[2])
 
     quote = Quote()
     await quote.fill_from_entry(result)
