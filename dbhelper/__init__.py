@@ -46,6 +46,9 @@ def create_srv_conn(host_name, user_name, user_pw, dbname):
         print('Error: {}'.format(err))
     return conn
 
+def close_srv_conn(conn):
+    conn.close()
+
 
 ################################################################################
 # Table management

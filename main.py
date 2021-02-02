@@ -161,6 +161,12 @@ async def roll_rand_status():
     if (num <= 5):
         await set_rand_status()
 
+def reset_sql_conn():
+    log('Resetting DB connection...')
+    global CONN
+    db.close_srv_conn(CONN)
+    CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
+
 
 ################################################################################
 # Helper classes
@@ -242,7 +248,11 @@ class Quote:
         cols = 'author_id, quoter_id, message_id, guild_id, channel_id'
         vals = '{}, {}, {}, {}, {}'.format(
                 author_id, quoter_id, message_id, guild_id, channel_id)
-        db.insert_partial(CONN, QUOTES_TABLE, cols, vals)
+        try:
+            db.insert_partial(CONN, QUOTES_TABLE, cols, vals)
+        except:
+            reset_sql_conn()
+            db.insert_partial(CONN, QUOTES_TABLE, cols, vals)
 
         # Acknowledge save with check mark emoji
         await self.message.clear_reaction(EMOJI_QUOTE)
@@ -259,7 +269,11 @@ class Quote:
         log('  Channel      :#{}'.format(self.message.channel.name))
         log('  Message      :{}'.format(self.message.content))
 
-        retval = db.delete(CONN, QUOTES_TABLE, 'message_id={}'.format(self.message.id))
+        try:
+            retval = db.delete(CONN, QUOTES_TABLE, 'message_id={}'.format(self.message.id))
+        except:
+            reset_sql_conn()
+            retval = db.delete(CONN, QUOTES_TABLE, 'message_id={}'.format(self.message.id))
         if retval != 0:
             log('  Error: Unable to delete message')
         else:
@@ -406,7 +420,11 @@ async def rquote(message):
             where += ' AND author_id = {}'.format(tagged_member.id)
 
     # Grab all results that match our criteria
-    results = db.select(CONN, QUOTES_TABLE, '*', where)
+    try:
+        results = db.select(CONN, QUOTES_TABLE, '*', where)
+    except:
+        reset_sql_conn()
+        results = db.select(CONN, QUOTES_TABLE, '*', where)
     if len(results) == 0:
         log('  No quotes found.')
         await message.channel.send(
