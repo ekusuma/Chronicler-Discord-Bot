@@ -355,16 +355,13 @@ async def repeat_quote(channel, quote):
     server_id = channel.guild.id
     channel_id = channel.id
     msg_id = quote.message.id
-    # URL is useful if a user wants to jump to the quoted message
-    url = 'https://discord.com/channels/{}/{}/{}'.format(
-        server_id, channel_id, msg_id)
 
     embed = discord.Embed(
         title='Quotes from the Chronicler!',
         color=discord.Color.red(),
         # Markdown-esque formatting, for a quote
-        description='> ' + quote.message.content,
-        url=url
+        # User can click on quote to jump to it
+        description='> [{}]({})'.format(quote.message.content, quote.message.jump_url)
     )
     # Author of the embed is the bot
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
