@@ -356,7 +356,7 @@ async def repeat_quote(channel, quote):
     channel_id = channel.id
     msg_id = quote.message.id
     # URL is useful if a user wants to jump to the quoted message
-    url = 'https://discordapp.com/channels/{}/{}/{}'.format(
+    url = 'https://discord.com/channels/{}/{}/{}'.format(
         server_id, channel_id, msg_id)
 
     embed = discord.Embed(
