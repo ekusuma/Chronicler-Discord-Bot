@@ -351,11 +351,6 @@ async def repeat_quote(channel, quote):
     quote : Quote
         The quote that the bot should send.
     """
-    # Get URL to quoted message
-    server_id = channel.guild.id
-    channel_id = channel.id
-    msg_id = quote.message.id
-
     embed = discord.Embed(
         title='Quotes from the Chronicler!',
         color=discord.Color.red(),
@@ -473,6 +468,172 @@ async def rquote(message):
 
     await repeat_quote(message.channel, quote)
 
+async def remindme_help(channel):
+    """Send a help message for usage of the $remindme command
+
+    Parameters
+    ==========
+    channel : discord.Channel
+        Channel to send the help message to.
+    """
+    embed = discord.Embed(
+        title='How to use Reminders!',
+        color=discord.Color.red()
+    )
+    embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
+
+    embed.add_field(name='Usage', inline=False,
+        value='`$remindme <time> <memo>`')
+    embed.add_field(name='What it does', inline = False,
+        value='Get a reminder in the channel some time later')
+    embed.add_field(name='Memo', inline=False,
+        value='[Optional] Memo is the message that will be repeated to you')
+    embed.add_field(name='Valid time units', inline=False,
+        value='`weeks`, `days`, `hours`, `minutes`')
+    embed.add_field(name='Example', inline=False,
+        value='`$remindme 1 minute A reminder 1 minute from now!`')
+    embed.set_footer(text='Run `$remindme help` to display this message again')
+
+    await channel.send(embed=embed)
+
+async def remindme_errmsg(message):
+    """Send an error message to the channel.
+
+    Parameters
+    ==========
+    message : discord.Message
+        The calling message.
+    """
+    log('  ERROR: invalid args for {}'.format(message.content))
+    await message.channel.send(
+        'Invalid arguments for `$remindme`! Use `$remindme help` for help.')
+
+async def remindme(message):
+    """Set and send a reminder for a user.
+
+    Parameters
+    ==========
+    message : discord.Message
+        The calling message, starting with `$remindme`
+    """
+    log('$remindme request from {}'.format(message.author.name))
+
+    # Asking for help will override any tokens
+    if 'help' in message.content.split():
+        await remindme_help(message.channel)
+        return
+
+    token_arr = message.content.split()
+    # Error out if there are no arguments
+    if len(token_arr) <= 1:
+        await remindme_errmsg(message)
+        return
+
+    # Parse the time
+    weeks = 0
+    days = 0
+    hours = 0
+    minutes = 0
+    memo = ''
+    was_number = False
+    set_time = False
+    # 0th index of this array should be '$remindme'
+    for i in range(1, len(token_arr)):
+        # Skip token if it's a number
+        if token_arr[i].isnumeric():
+            if was_number:
+                await remindme_errmsg(message)
+                return
+            was_number = True
+            continue
+        if token_arr[i] == 'week' or token_arr[i] == 'weeks':
+            # If there was no number before, then it's invalid
+            if not was_number:
+                await remindme_errmsg(message)
+                return
+            weeks = int(token_arr[i-1])
+            was_number = False
+            set_time = True
+        elif token_arr[i] == 'day' or token_arr[i] == 'days':
+            if not was_number:
+                await remindme_errmsg(message)
+                return
+            days = int(token_arr[i-1])
+            was_number = False
+            set_time = True
+        elif token_arr[i] == 'hour' or token_arr[i] == 'hours' or token_arr[i] == 'hr' or token_arr[i] == 'hrs':
+            if not was_number:
+                await remindme_errmsg(message)
+                return
+            hours = int(token_arr[i-1])
+            was_number = False
+            set_time = True
+        elif token_arr[i] == 'minute' or token_arr[i] == 'minutes' or token_arr[i] == 'min' or token_arr[i] == 'mins':
+            if not was_number:
+                await remindme_errmsg(message)
+                return
+            minutes = int(token_arr[i-1])
+            was_number = False
+            set_time = True
+        # Otherwise, the rest of the message is the memo
+        # Note that if there are more time units after the start of the memo,
+        # they are subsequently ignored.
+        else:
+            # Error if no time was set
+            if not set_time:
+                await remindme_errmsg(message)
+                return
+            memo = ' '.join(token_arr[i:len(token_arr)])
+            break
+    # If the memo is empty, then make it '`<none>`'
+    if len(memo) == 0:
+        memo = '`<none>`'
+    # Log the operation
+    log('  wk|d|h|m: {}|{}|{}|{}'.format(weeks, days, hours, minutes))
+    log('  Memo: {}'.format(memo))
+
+    # Construct the confirmation message
+    conf = 'Okay! I\'ll remind you in this channel in**'
+    if weeks > 0:
+        if weeks > 1:
+            conf += ' {} weeks'.format(weeks)
+        else:
+            conf += ' {} week'.format(weeks)
+    if days > 0:
+        if days > 1:
+            conf += ' {} days'.format(days)
+        else:
+            conf += ' {} day'.format(days)
+    if hours > 0:
+        if hours > 1:
+            conf += ' {} hours'.format(hours)
+        else:
+            conf += ' {} hour'.format(hours)
+    if minutes > 0:
+        if minutes > 1:
+            conf += ' {} minutes'.format(minutes)
+        else:
+            conf += ' {} minute'.format(minutes)
+    conf += '**.'
+    await message.channel.send(conf)
+
+    curr_time = datetime.datetime.now()
+    target_time = curr_time + datetime.timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes)
+    # NOTE: If the bot is killed, all pending reminders are lost...at this point
+    # I have no obvious solution so consider it a beta
+    log('  Awaiting time...')
+    await discord.utils.sleep_until(target_time)
+
+    # Send the reminder as an embed
+    embed = discord.Embed(title='Your reminder!', color=discord.Color.red())
+    embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
+    embed.add_field(name='Requestor', inline=False, value=message.author.mention)
+    embed.add_field(name='Reminder', inline=False, value=memo)
+    embed.add_field(name='Jump to message', inline=False,
+        value='[{}]({})'.format('Click here', message.jump_url))
+    await message.channel.send(content=message.author.mention, embed=embed)
+    log('  Reminder sent!')
+
 
 ################################################################################
 # Discord event functions
@@ -499,9 +660,11 @@ async def on_message(message):
     if message.author == CLIENT.user:
         return
     if startswith_word(message.content, '$hello'):
-        await message.channel.send('Orayo~!')
+        await message.channel.send('ぉぁ~ょ')
     if startswith_word(message.content, '$rquote'):
         await rquote(message)
+    if startswith_word(message.content, '$remindme'):
+        await remindme(message)
 
     # Chance to change the bot status on new message
     await roll_rand_status()
