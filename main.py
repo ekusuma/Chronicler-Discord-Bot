@@ -52,6 +52,14 @@ KEY_REACTS = {
 # These emoji are reactions for the bot to report a status
 EMOJI_BOT_CONFIRM   = '✅'
 
+# Strings of all the supported commands
+BOT_COMMAND_NAMES = [
+    '`$help`',
+    '`$rquote`',
+    '`$remindme`',
+    '`$hello`'
+]
+
 # Fun statuses for the bot
 BOT_STATUSES = [
     'I\'m DOG!',
@@ -490,11 +498,13 @@ async def remindme_help(channel):
     embed.add_field(name='What it does', inline = False,
         value='Get a reminder in the channel some time later')
     embed.add_field(name='Memo', inline=False,
-        value='[Optional] Memo is the message that will be repeated to you')
+        value='**[Optional]** Memo is the message that will be repeated to you')
     embed.add_field(name='Valid time units', inline=False,
         value='`weeks`, `days`, `hours`, `minutes`')
     embed.add_field(name='Example', inline=False,
         value='`$remindme 1 minute A reminder 1 minute from now!`')
+    embed.add_field(name='Notes', inline=False,
+        value='Note that if the bot dies, all pending reminders are lost!')
     embed.set_footer(text='Run `$remindme help` to display this message again')
 
     await channel.send(embed=embed)
@@ -637,6 +647,21 @@ async def remindme(message):
     await message.channel.send(content=message.author.mention, embed=embed)
     log('  Reminder sent!')
 
+async def helpcmd(channel):
+    """List all of the available commands.
+
+    Parameters
+    ==========
+    channel : discord.Channel
+        The channel to send the help message to.
+    """
+    cmdlist = ', '.join(BOT_COMMAND_NAMES)
+    embed = discord.Embed(title='Available commands', color=discord.Color.red(),
+        description=cmdlist)
+    embed.add_field(name='Further usage', inline=False,
+        value='If the command has extra arguments, add `help` after the command')
+    await channel.send(embed=embed)
+
 
 ################################################################################
 # Discord event functions
@@ -662,6 +687,8 @@ async def on_message(message):
     # Ignore the message if it's from this bot
     if message.author == CLIENT.user:
         return
+    if startswith_word(message.content, '$help'):
+        await helpcmd(message.channel)
     if startswith_word(message.content, '$hello'):
         await message.channel.send('ぉぁ~ょ')
     if startswith_word(message.content, '$rquote'):
