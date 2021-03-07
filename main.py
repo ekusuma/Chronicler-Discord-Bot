@@ -356,12 +356,15 @@ async def repeat_quote(channel, quote):
         color=discord.Color.red(),
         # Markdown-esque formatting, for a quote
         # User can click on quote to jump to it
-        description='> [{}]({})'.format(quote.message.content, quote.message.jump_url)
+        description='> {}'.format(quote.message.content)
     )
     # Author of the embed is the bot
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
     # But thumbnail should be avatar of the quote's author
     embed.set_thumbnail(url=quote.author.avatar_url)
+    # Clickable link to jump to message
+    embed.add_field(name='Jump to message', inline=False,
+        value='[{}]({})'.format('Click here', quote.message.jump_url))
 
     # Construct footer
     ctime = quote.message.created_at
