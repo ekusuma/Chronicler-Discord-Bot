@@ -112,9 +112,15 @@ def delete(conn, table, where):
 # Reading functions
 ################################################################################
 
-def select(conn, table, columns, where):
-    if where == None:
-        q = 'SELECT {} FROM {};'.format(columns, table)
-    else:
-        q = 'SELECT {} FROM {} WHERE {};'.format(columns, table, where)
+def select(conn, table, columns, where=None, orderby=None, orderasc=False):
+    q = 'SELECT {} FROM {}'.format(columns, table)
+    if where != None:
+        q += ' WHERE {}'.format(where)
+    if orderby != None:
+        q += ' ORDER BY {}'
+        if orderasc:
+            q += 'ASC'
+        else:
+            q += 'DESC'
+    q += ';'
     return read_query(conn, q)
