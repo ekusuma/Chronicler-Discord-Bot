@@ -70,6 +70,9 @@ ALLOW_XCHAN = True
 # Maximum size of the "repeat buffer"
 REPEAT_BUF_SIZE = 25
 
+# Number of quotes to display per page for `$quotes` command
+MAX_QUOTES_PER_PAGE = 10
+
 
 ################################################################################
 # Globals used by bot, DO NOT EDIT!
@@ -416,6 +419,7 @@ async def rquote_help(channel):
     )
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
 
+    #TODO: add stuff to describe $quotes
     embed.add_field(name='Adding a quote', inline=True,
         value='React to a message with the `:speech_balloon:` emoji (💬)')
     embed.add_field(name='Removing a quote', inline=True,
@@ -477,6 +481,107 @@ async def rquote(message):
         await message.channel.send(
             'No quotes found! Use `$rquote help` for usage information.')
         return
+    # Pick a random quote from the bunch
+    result = random.choice(results)
+    # Reroll if the result is in the repeat buffer
+    #   Message ID is Index 2 of the results tuple
+    #   If there is only one result remaining, then pick that anyway
+    while (len(results) > 1 and result[2] in REPEAT_BUF):
+        results.remove(result)
+        result = random.choice(results)
+    # If the final chosen one isn't in repeat buffer, then add it
+    if result[2] not in REPEAT_BUF:
+        add_to_repeat_buf(result[2])
+
+    quote = Quote()
+    await quote.fill_from_entry(result)
+    log('  Author       :{}'.format(quote.author.name))
+    log('  Channel      :#{}'.format(quote.message.channel.name))
+    log('  Message      :{}'.format(quote.message.content))
+
+    await repeat_quote(message.channel, quote)
+
+async def list_quotes(quote_list):
+    """List out the quotes provided in a list to the user, with interactible menu
+
+    Parameters
+    ==========
+    quote_list : sql.results[]
+        List of SQL query results.
+    """
+    # Convert list of SQL entries to our own quote object
+    converted = []
+    for result in quote_list:
+        quote = Quote()
+        await quote.fill_from_entry(result)
+        convertted.append(quote)
+    return
+
+async def quotes(message):
+    """List all quotes saved by the bot
+
+    Parameters
+    ==========
+    message : discord.Message
+        User message that triggered the command.
+    """
+    #TODO: differentiate with rquote (also split into helpers?)
+    log('$quotes request from {}'.format(message.author.name))
+
+    # Asking for help will override any tokens
+    if 'help' in message.content.split():
+        await rquote_help(message.channel)
+        return
+
+    # Look to see who was tagged, if any
+    tagged_member = None
+    mentions = message.mentions
+    if len(mentions) > 1:
+        log('  ERROR: more than one user is tagged')
+        await message.delete()
+        await message.channel.send(
+            'You cannot tag more than one user for `$rquote`!')
+        return
+    elif len(mentions) == 1:
+        tagged_member = mentions[0]
+
+    # Filter by channel ID, if cross-channel setting is disabled
+    if ALLOW_XCHAN:
+        if tagged_member != None:
+            where = 'author_id = {}'.format(tagged_member.id)
+        else:
+            where = None
+    else:
+        where = 'channel_id = {}'.format(message.channel.id)
+        if tagged_member != None:
+            where += ' AND author_id = {}'.format(tagged_member.id)
+
+    # Grab all results that match our criteria
+    orderby = 'message_id'
+    try:
+        # Rely on discord message ID being sequential, and order with highest ID first
+        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, False)
+    except:
+        reset_sql_conn()
+        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, False)
+    if len(results) == 0:
+        log('  No quotes found.')
+        await message.channel.send(
+            'No quotes found! Use `$rquote help` for usage information.')
+        return
+
+    # do-while loop to iterate through all results
+    start_idx   = 0
+    end_idx     = min(MAX_QUOTES_PER_PAGE, len(results))
+    while True:
+        # Guaranteed from earlier check that len(results) != 0
+        list_quotes(results[start_idx:end_idx])
+        if end_idx == len(results):
+            break
+        start_idx   = min(start_idx + MAX_QUOTES_PER_PAGE, len(results))
+        end_idx     = min(end_idx + MAX_QUOTES_PER_PAGE, len(results))
+
+
     # Pick a random quote from the bunch
     result = random.choice(results)
     # Reroll if the result is in the repeat buffer
