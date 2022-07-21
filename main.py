@@ -28,17 +28,10 @@ import dbhelper as db
 # Useful globals
 ################################################################################
 
-# Bot's private token, to be read from the .token file (DO NOT PUT IN REPO)
-TOKEN = ''
-
-# Global instance of the bot's Discord client
-CLIENT = None
-
-# Connection to the bot's MySQL DB
-CONN = None
-
-# Name of the quotes table
-QUOTES_TABLE = 'quotes'
+# Set to True for debug mode
+#   Will sign in to SQL as "chronicler_DBG", and use DB "chrondb_DBG" with table "quotes_DBG"
+#   It is highly recommended to have a separate bot for this mode
+BOT_DEBUGMODE   = False
 
 # Emojis to watch reactions for (aliased to variable names since typing emoji
 # can be annoying)
@@ -51,14 +44,6 @@ KEY_REACTS = {
 }
 # These emoji are reactions for the bot to report a status
 EMOJI_BOT_CONFIRM   = '✅'
-
-# Strings of all the supported commands
-BOT_COMMAND_NAMES = [
-    '`$help`',
-    '`$rquote`',
-    '`$remindme`',
-    '`$hello`'
-]
 
 # Fun statuses for the bot
 BOT_STATUSES = [
@@ -81,9 +66,36 @@ STATUS_RR_CHANCE = 1
 ALLOW_XCHAN = True
 
 # Maximum size of the "repeat buffer"
-REPEAT_BUF_SIZE = 10
+REPEAT_BUF_SIZE = 25
+
+
+################################################################################
+# Globals used by bot, DO NOT EDIT!
+################################################################################
+
+# Name of the quotes table
+QUOTES_TABLE = 'quotes_DBG' if BOT_DEBUGMODE else 'quotes'
+
+# Strings of all the supported commands
+BOT_COMMAND_NAMES = [
+    '`$help`',
+    '`$rquote`',
+    '`$remindme`',
+    '`$hello`'
+]
+
 # (Revolving) list of messages to not repeat
 REPEAT_BUF = []
+
+# Bot's private token, to be read from the .token file (DO NOT PUT IN REPO)
+TOKEN = ''
+
+# Global instance of the bot's Discord client
+CLIENT = None
+
+# Connection to the bot's MySQL DB
+CONN = None
+
 
 
 ################################################################################
@@ -105,7 +117,10 @@ except FileNotFoundError:
 # Create new instance of Discord client
 CLIENT = discord.Client()
 # Create connection to Chronicler's MySQL DB
-CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
+if BOT_DEBUGMODE:
+    CONN = db.create_srv_conn('localhost', 'chronicler_DBG', TOKEN, 'chrondb_DBG')
+else:
+    CONN = db.create_srv_conn('localhost', 'chronicler', TOKEN, 'chrondb')
 if CONN == None:
     print('ERROR: Unable to connect to DB.')
     exit(1)
@@ -371,8 +386,8 @@ async def repeat_quote(channel, quote):
     # But thumbnail should be avatar of the quote's author
     embed.set_thumbnail(url=quote.author.avatar_url)
     # Clickable link to jump to message
-    embed.add_field(name='Jump to message', inline=False,
-        value='[{}]({})'.format('Click here', quote.message.jump_url))
+    embed.add_field(name='View context...?', inline=False,
+        value='[{}]({})'.format('Click here to jump', quote.message.jump_url))
 
     # Construct footer
     ctime = quote.message.created_at
