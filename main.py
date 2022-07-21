@@ -37,6 +37,8 @@ BOT_DEBUGMODE   = False
 # can be annoying)
 EMOJI_QUOTE     = '💬'      # For quoting a message
 EMOJI_DELQUOTE  = '❌'      # For deleting a message
+EMOJI_LEFT      = '◀'       # Navigate to prev in menu
+EMOJI_RIGHT     = '▶'       # Navigate to next in menu
 # Use this set to determine if an emoji is in it
 KEY_REACTS = {
     EMOJI_QUOTE,
@@ -81,6 +83,7 @@ BOT_COMMAND_NAMES = [
     '`$help`',
     '`$rquote`',
     '`$remindme`',
+    '`$quotes`',
     '`$hello`'
 ]
 
