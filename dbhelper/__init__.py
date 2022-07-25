@@ -117,10 +117,10 @@ def select(conn, table, columns, where=None, orderby=None, orderasc=False):
     if where != None:
         q += ' WHERE {}'.format(where)
     if orderby != None:
-        q += ' ORDER BY {}'
+        q += ' ORDER BY {}'.format(orderby)
         if orderasc:
-            q += 'ASC'
+            q += ' ASC'
         else:
-            q += 'DESC'
+            q += ' DESC'
     q += ';'
     return read_query(conn, q)
