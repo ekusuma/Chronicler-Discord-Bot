@@ -540,10 +540,6 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
     quote_index : int
         Specify one quote to repeat. If this is negative, then this function will only list the quotes.
     """
-    # This function is to check if any user responds with left/right arrow emoji
-    def check_reaction(reaction, user):
-        return (not user.bot) and (reaction.emoji == EMOJI_LEFT or reaction.emoji == EMOJI_RIGHT)
-
     # Store length of list once so we don't have to do O(n) operation every time
     listlen = len(quote_list)
     if listlen < 1:
@@ -579,6 +575,11 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
     # We only have to send the embed once, so use this bool to note that
     embed_sent = False
     sent_message = None
+
+    # This function is to check if any user responds with left/right arrow emoji
+    def check_reaction(reaction, user):
+        return (not user.bot) and (reaction.emoji == EMOJI_LEFT or reaction.emoji == EMOJI_RIGHT) and reaction.message == sent_message
+
     while True:
         start_idx   = min(pageno * MAX_QUOTES_PER_PAGE, listlen-1)
         end_idx     = min((pageno+1) * MAX_QUOTES_PER_PAGE, listlen)
