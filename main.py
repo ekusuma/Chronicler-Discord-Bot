@@ -18,6 +18,8 @@ __license__ = 'MIT'
 import datetime
 import pytz
 import random
+import asyncio
+from time import sleep
 
 import discord
 
@@ -31,7 +33,7 @@ import dbhelper as db
 # Set to True for debug mode
 #   Will sign in to SQL as "chronicler_DBG", and use DB "chrondb_DBG" with table "quotes_DBG"
 #   It is highly recommended to have a separate bot for this mode
-BOT_DEBUGMODE   = False
+BOT_DEBUGMODE   = True
 
 # Emojis to watch reactions for (aliased to variable names since typing emoji
 # can be annoying)
@@ -71,7 +73,11 @@ ALLOW_XCHAN = True
 REPEAT_BUF_SIZE = 25
 
 # Number of quotes to display per page for `$quotes` command
-MAX_QUOTES_PER_PAGE = 10
+MAX_QUOTES_PER_PAGE = 5
+# Number of characters for a quoted message preview
+MESSAGE_PREVIEW_LEN = 80
+# Time in seconds for quotes list react timeout
+QUOTES_REACT_TIMEOUT = 60
 
 
 ################################################################################
@@ -84,10 +90,10 @@ QUOTES_TABLE = 'quotes_DBG' if BOT_DEBUGMODE else 'quotes'
 # Strings of all the supported commands
 BOT_COMMAND_NAMES = [
     '`$help`',
-    '`$rquote`',
-    '`$remindme`',
     '`$quotes`',
-    '`$hello`'
+    '`$quote`',
+    '`$rquote`',
+    '`$remindme`'
 ]
 
 # (Revolving) list of messages to not repeat
@@ -221,6 +227,18 @@ def add_to_repeat_buf(msg_id):
         log('  Removed {} from repeat buffer'.format(removed))
     REPEAT_BUF.append(msg_id)
     log('  Added {} to repeat buffer'.format(msg_id))
+
+def convert_index(index, total):
+    """Flip an index to its reverse (i.e., make index 0 become the last index, and vice versa).
+
+    Parameters
+    ==========
+    index : int
+        The index to convert.
+    total : int
+        The total number of indices in whatever iterable.
+    """
+    return total - index - 1
 
 
 ################################################################################
@@ -380,12 +398,14 @@ async def repeat_quote(channel, quote):
     quote : Quote
         The quote that the bot should send.
     """
+    # Add a quote formatter (>) to start of each line
+    fmt_content = quote.message.content.replace('\n', '\n > ')
     embed = discord.Embed(
         title='Quotes from the Chronicler!',
         color=discord.Color.red(),
         # Markdown-esque formatting, for a quote
         # User can click on quote to jump to it
-        description='> {}'.format(quote.message.content)
+        description='> {}'.format(fmt_content)
     )
     # Author of the embed is the bot
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
@@ -419,16 +439,23 @@ async def rquote_help(channel):
     )
     embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
 
-    #TODO: add stuff to describe $quotes
     embed.add_field(name='Adding a quote', inline=True,
         value='React to a message with the `:speech_balloon:` emoji (💬)')
     embed.add_field(name='Removing a quote', inline=True,
         value='React to a message with the `:x:` emoji (❌)')
-    embed.add_field(name='Picking a quote', inline=False,
+    embed.add_field(name='Picking a random quote', inline=False,
         value='`$rquote` without mentions for a random quote')
-    embed.add_field(name='Picking a quote from a user', inline=False,
+    embed.add_field(name='Picking a random quote from a user', inline=False,
         value='`$rquote @user` to pick a random quote from `user`')
-    embed.set_footer(text='Run `$rquote help` to display this message again')
+    embed.add_field(name='Picking a specific quote', inline=False,
+        value='`$quote <number>` without mentions for a specific quote')
+    embed.add_field(name='Picking a specific quote from a user', inline=False,
+        value='`$quote @user <number>` to pick a specific quote from `user`')
+    embed.add_field(name='Listing all quotes', inline=False,
+        value='`$quotes` to list all quotes saved by the bot')
+    embed.add_field(name='Listing all quotes from a user', inline=False,
+        value='`$quotes @user` to list all quotes saved by the bot, made by `user`')
+    embed.set_footer(text='Run `$quote help` to display this message again')
 
     await channel.send(embed=embed)
 
@@ -479,7 +506,7 @@ async def rquote(message):
     if len(results) == 0:
         log('  No quotes found.')
         await message.channel.send(
-            'No quotes found! Use `$rquote help` for usage information.')
+            'No quotes found! Use `$quote help` for usage information.')
         return
     # Pick a random quote from the bunch
     result = random.choice(results)
@@ -501,37 +528,135 @@ async def rquote(message):
 
     await repeat_quote(message.channel, quote)
 
-async def list_quotes(quote_list):
+async def list_quotes(invoke_message, quote_list, quote_index=-1):
     """List out the quotes provided in a list to the user, with interactible menu
 
     Parameters
     ==========
+    invoke_message : discord.Message
+        The invoking message.
     quote_list : sql.results[]
         List of SQL query results.
+    quote_index : int
+        Specify one quote to repeat. If this is negative, then this function will only list the quotes.
     """
-    # Convert list of SQL entries to our own quote object
-    converted = []
-    for result in quote_list:
-        quote = Quote()
-        await quote.fill_from_entry(result)
-        convertted.append(quote)
-    return
+    # This function is to check if any user responds with left/right arrow emoji
+    def check_reaction(reaction, user):
+        return (not user.bot) and (reaction.emoji == EMOJI_LEFT or reaction.emoji == EMOJI_RIGHT)
 
-async def quotes(message):
+    # Store length of list once so we don't have to do O(n) operation every time
+    listlen = len(quote_list)
+    if listlen < 1:
+        return
+    # Number of pages for given list length
+    max_pages = listlen // MAX_QUOTES_PER_PAGE
+
+    # quote_index is indexed starting at 1, so need to -1 later
+    if quote_index > 0 and quote_index <= listlen:
+        chosen_quote = Quote()
+        chosen_index = convert_index(quote_index-1, listlen)
+        await chosen_quote.fill_from_entry(quote_list[chosen_index])
+        await repeat_quote(invoke_message.channel, chosen_quote)
+        return
+    elif quote_index == 0 or quote_index > listlen:
+        await invoke_message.channel.send('Invalid quote number, {}! Run `$quotes` to see what numbers are valid.'.format(invoke_message.author.mention))
+        await invoke_message.delete()
+        return
+    # Otherwise no index was specified, so continue execution
+
+    embed = discord.Embed(
+        title='Quotes from the Chronicler!',
+        color=discord.Color.red(),
+        description='View the whole quote with `$quote` command using the number of the quote (i.e. `$quote 3` for quote #3)\n\nIf a user is mentioned, don\'t forget to include that mention as well in `$quote` command.'
+        #description='Type the number of message you want to view:'
+    )
+    embed.set_footer(text='Use the left/right emoji reactions to page through the list.\nPaging may be slow due to Discord API calls, so please be patient.')
+
+    # We iterate backwards, as we want to display the most recent quotes first
+    pageno      = 0
+    quote       = Quote()
+    log('    Formatting quote list embed...')
+    # We only have to send the embed once, so use this bool to note that
+    embed_sent = False
+    sent_message = None
+    while True:
+        start_idx   = min(pageno * MAX_QUOTES_PER_PAGE, listlen-1)
+        end_idx     = min((pageno+1) * MAX_QUOTES_PER_PAGE, listlen)
+        for i in range(start_idx, end_idx):
+            # fill_from_entry() calls API to retrieve message info, so should only call when we need the info
+            await quote.fill_from_entry(quote_list[i])
+            # Only take the first MESSAGE_PREVIEW_LEN characters
+            if len(quote.message.content) > MESSAGE_PREVIEW_LEN:
+                message = '> {}...'.format(discord.utils.escape_markdown(quote.message.content[0:MESSAGE_PREVIEW_LEN]))
+            else:
+                message = '> {}'.format(discord.utils.escape_markdown(quote.message.content))
+            # Replace newlines with spaces to clean output
+            message = message.replace('\n', ' ')
+            embed.add_field(inline=False, name='{}'.format(convert_index(i, listlen)+1), value='{}\n*by **{}***'.format(message, quote.author.name))
+        if not embed_sent:
+            sent_message = await invoke_message.channel.send(embed=embed)
+            embed_sent = True
+        else:
+            await sent_message.edit(embed=embed)
+        await sent_message.add_reaction(EMOJI_LEFT)
+        await sent_message.add_reaction(EMOJI_RIGHT)
+        log('    Sent quotes list to #{}.'.format(invoke_message.channel.name))
+
+        try:
+            reaction, user = await CLIENT.wait_for('reaction_add', check=check_reaction, timeout=QUOTES_REACT_TIMEOUT)
+            if reaction.emoji == EMOJI_LEFT:
+                if pageno == 0:             # Wrap around to last page (lowest message IDs)
+                    pageno = max_pages
+                else:
+                    pageno -= 1
+            elif reaction.emoji == EMOJI_RIGHT:
+                if pageno == max_pages:   # Wrap around to first page (highest message IDs)
+                    pageno = 0
+                else:
+                    pageno += 1
+            # Reset the embed
+            await sent_message.clear_reactions()
+            embed.clear_fields()
+            continue
+        except asyncio.TimeoutError:
+            #log('    User timed out.')
+            #message = 'Too slow to respond, {}!'.format(invoke_message.author.mention)
+            #await invoke_message.channel.send(message)
+            break
+
+async def quotes(message, pick_quote=False):
     """List all quotes saved by the bot
 
     Parameters
     ==========
     message : discord.Message
         User message that triggered the command.
+    pick_quote : bool
+        True if the user is trying to pick a specific quote to repeat.
     """
-    #TODO: differentiate with rquote (also split into helpers?)
-    log('$quotes request from {}'.format(message.author.name))
+    if pick_quote:
+        log('$quote request from {}'.format(message.author.name))
+    else:
+        log('$quotes request from {}'.format(message.author.name))
 
     # Asking for help will override any tokens
     if 'help' in message.content.split():
         await rquote_help(message.channel)
         return
+
+    # If picking a quote, parse out the numerical token (choosing the first number we find)
+    quotenum = -1
+    if pick_quote:
+        for word in message.content.split():
+            if word.isnumeric():
+                quotenum = int(word)
+                log('    Choosing Quote #{}'.format(quotenum))
+                break
+        if quotenum < 0:    # User didn't specify an argument
+            log('    ERROR: Did not specify number for $quote command')
+            await message.channel.send('You must specify a valid, positive number for `$quote`, {}!'.format(message.author.mention))
+            await message.delete()
+            return
 
     # Look to see who was tagged, if any
     tagged_member = None
@@ -558,49 +683,19 @@ async def quotes(message):
 
     # Grab all results that match our criteria
     orderby = 'message_id'
+    log('    Pulling list of quotes...')
     try:
         # Rely on discord message ID being sequential, and order with highest ID first
-        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, False)
+        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, orderasc=False)
     except:
         reset_sql_conn()
-        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, False)
+        results = db.select(CONN, QUOTES_TABLE, '*', where, orderby, orderasc=False)
     if len(results) == 0:
         log('  No quotes found.')
-        await message.channel.send(
-            'No quotes found! Use `$rquote help` for usage information.')
+        await message.channel.send('No quotes found! Use `$quote help` for usage information.')
         return
 
-    # do-while loop to iterate through all results
-    start_idx   = 0
-    end_idx     = min(MAX_QUOTES_PER_PAGE, len(results))
-    while True:
-        # Guaranteed from earlier check that len(results) != 0
-        list_quotes(results[start_idx:end_idx])
-        if end_idx == len(results):
-            break
-        start_idx   = min(start_idx + MAX_QUOTES_PER_PAGE, len(results))
-        end_idx     = min(end_idx + MAX_QUOTES_PER_PAGE, len(results))
-
-
-    # Pick a random quote from the bunch
-    result = random.choice(results)
-    # Reroll if the result is in the repeat buffer
-    #   Message ID is Index 2 of the results tuple
-    #   If there is only one result remaining, then pick that anyway
-    while (len(results) > 1 and result[2] in REPEAT_BUF):
-        results.remove(result)
-        result = random.choice(results)
-    # If the final chosen one isn't in repeat buffer, then add it
-    if result[2] not in REPEAT_BUF:
-        add_to_repeat_buf(result[2])
-
-    quote = Quote()
-    await quote.fill_from_entry(result)
-    log('  Author       :{}'.format(quote.author.name))
-    log('  Channel      :#{}'.format(quote.message.channel.name))
-    log('  Message      :{}'.format(quote.message.content))
-
-    await repeat_quote(message.channel, quote)
+    await list_quotes(message, results, quote_index=quotenum)
 
 async def remindme_help(channel):
     """Send a help message for usage of the $remindme command
@@ -782,7 +877,7 @@ async def helpcmd(channel):
     embed = discord.Embed(title='Available commands', color=discord.Color.red(),
         description=cmdlist)
     embed.add_field(name='Further usage', inline=False,
-        value='If the command has extra arguments, add `help` after the command')
+        value='Add `help` after the command')
     await channel.send(embed=embed)
 
 
@@ -798,7 +893,7 @@ async def on_ready():
 
 @CLIENT.event
 async def on_message(message):
-    """Bot routines to run whenever a new messge is sent
+    """Bot routines to run whenever a new message is sent
 
     Basically just check for target keywords.
 
@@ -807,8 +902,8 @@ async def on_message(message):
     message : discord.Message
         The message that was just sent.
     """
-    # Ignore the message if it's from this bot
-    if message.author == CLIENT.user:
+    # Ignore the message if it's from a bot
+    if message.author.bot:
         return
     if startswith_word(message.content, '$help'):
         await helpcmd(message.channel)
@@ -816,6 +911,10 @@ async def on_message(message):
         await message.channel.send('ぉぁ~ょ')
     if startswith_word(message.content, '$rquote'):
         await rquote(message)
+    if startswith_word(message.content, '$quotes'):
+        await quotes(message)
+    if startswith_word(message.content, '$quote'):
+        await quotes(message, pick_quote=True)
     if startswith_word(message.content, '$remindme'):
         await remindme(message)
 
