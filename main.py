@@ -33,7 +33,7 @@ import dbhelper as db
 # Set to True for debug mode
 #   Will sign in to SQL as "chronicler_DBG", and use DB "chrondb_DBG" with table "quotes_DBG"
 #   It is highly recommended to have a separate bot for this mode
-BOT_DEBUGMODE   = True
+BOT_DEBUGMODE   = False
 
 # Emojis to watch reactions for (aliased to variable names since typing emoji
 # can be annoying)
