@@ -560,14 +560,6 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
         return
     # Otherwise no index was specified, so continue execution
 
-    embed = discord.Embed(
-        title='Quotes from the Chronicler!',
-        color=discord.Color.red(),
-        description='View the whole quote with `$quote` command using the number of the quote (i.e. `$quote 3` for quote #3)\n\nIf a user is mentioned, don\'t forget to include that mention as well in `$quote` command.'
-        #description='Type the number of message you want to view:'
-    )
-    embed.set_footer(text='Use the left/right emoji reactions to page through the list.\nPaging may be slow due to Discord API calls, so please be patient.')
-
     # We iterate backwards, as we want to display the most recent quotes first
     pageno      = 0
     quote       = Quote()
@@ -576,11 +568,19 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
     embed_sent = False
     sent_message = None
 
+    embed = discord.Embed(
+        title='Quotes from the Chronicler!',
+        color=discord.Color.red(),
+        description='View the whole quote with `$quote` command using the number of the quote (i.e. `$quote 3` for quote #3)\n\nIf a user is mentioned, don\'t forget to include that mention as well in `$quote` command.'
+    )
+    footertext = 'Use the left/right emoji reactions to page through the list.\nPaging may be slow due to Discord API calls, so please be patient.'
+
     # This function is to check if any user responds with left/right arrow emoji
     def check_reaction(reaction, user):
         return (not user.bot) and (reaction.emoji == EMOJI_LEFT or reaction.emoji == EMOJI_RIGHT) and reaction.message == sent_message
 
     while True:
+        embed.set_footer(text='{}\n\nPage {} of {}'.format(footertext, pageno+1, max_pages+1))
         start_idx   = min(pageno * MAX_QUOTES_PER_PAGE, listlen-1)
         end_idx     = min((pageno+1) * MAX_QUOTES_PER_PAGE, listlen)
         for i in range(start_idx, end_idx):
@@ -588,12 +588,12 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
             await quote.fill_from_entry(quote_list[i])
             # Only take the first MESSAGE_PREVIEW_LEN characters
             if len(quote.message.content) > MESSAGE_PREVIEW_LEN:
-                message = '> {}...'.format(discord.utils.escape_markdown(quote.message.content[0:MESSAGE_PREVIEW_LEN]))
+                message = '> {}\n...'.format(discord.utils.escape_markdown(quote.message.content[0:MESSAGE_PREVIEW_LEN]))
             else:
                 message = '> {}'.format(discord.utils.escape_markdown(quote.message.content))
             # Replace newlines with spaces to clean output
             message = message.replace('\n', ' ')
-            embed.add_field(inline=False, name='{}'.format(convert_index(i, listlen)+1), value='{}\n*by **{}***'.format(message, quote.author.name))
+            embed.add_field(inline=False, name='{}'.format(convert_index(i, listlen)+1), value='{}\n*by **{}***'.format(message, discord.utils.escape_markdown(quote.author.nick)))
         if not embed_sent:
             sent_message = await invoke_message.channel.send(embed=embed)
             embed_sent = True
@@ -623,6 +623,7 @@ async def list_quotes(invoke_message, quote_list, quote_index=-1):
             #log('    User timed out.')
             #message = 'Too slow to respond, {}!'.format(invoke_message.author.mention)
             #await invoke_message.channel.send(message)
+            await sent_message.clear_reactions()
             break
 
 async def quotes(message, pick_quote=False):
