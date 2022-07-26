@@ -407,8 +407,6 @@ async def repeat_quote(channel, quote):
         # User can click on quote to jump to it
         description='> {}'.format(fmt_content)
     )
-    # Author of the embed is the bot
-    embed.set_author(name=CLIENT.user, icon_url=CLIENT.user.avatar_url)
     # But thumbnail should be avatar of the quote's author
     embed.set_thumbnail(url=quote.author.avatar_url)
     # Clickable link to jump to message
